@@ -2,6 +2,7 @@ import Html exposing (..)
 import Html.App as Html
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
+import String exposing (..)
 import WebSocket
 
 import Json.Decode as D
@@ -13,6 +14,9 @@ main =
     , update = update
     , subscriptions = subscriptions
     }
+
+
+-- OSC Models --
 
 type OSCArg
   = OSCFloat Float
@@ -31,12 +35,12 @@ encodeOSCArg arg =
     OSCFloat f ->
       toString f
     OSCString s ->
-      s
+      "\"" ++ s ++ "\""
 
 
 type alias OSCMessage =
   { address : String
-  , args: List OSCArg }
+  , args : List OSCArg }
 
 decodeOSCMessage : D.Decoder OSCMessage
 decodeOSCMessage =
@@ -51,14 +55,35 @@ decodeOSCMessage =
 
 encodeOSCMessage : OSCMessage -> String
 encodeOSCMessage { address, args } =
-  address ++ "," ++ (List.foldr ((++) << encodeOSCArg) "" args)
+  "[\"" ++ address ++ "\"," ++ (join "," (List.map encodeOSCArg args)) ++ "]"
+
+
+type alias OSCBundle = List OSCMessage
+
+decodeOSCBundle : D.Decoder OSCBundle
+decodeOSCBundle =
+  D.customDecoder (D.list D.value) (\jsonList ->
+    case jsonList of
+      bundleText :: timing :: msgs ->
+        (List.foldr (Result.map2 (::)) (Ok []) (List.map (D.decodeValue decodeOSCMessage) msgs))
+
+      _ ->
+        Result.Err "expecing a bundle")
+
+
+encodeOSCBundle : OSCBundle -> String
+encodeOSCBundle bundle =
+  "[\"#bundle\"," ++ (join "," (List.map encodeOSCMessage bundle)) ++ "]"
+
+
+-- APP --
 
 type alias Model =
   { sentMessages : List OSCMessage
-  , receivedMessages : List (Result String OSCMessage)
+  , receivedMessages : List (Result String OSCBundle)
   }
 
-websocketLocation = "ws://localhost:3030"
+websocketLocation = "ws://localhost:3000"
 
 init : (Model, Cmd Msg)
 init =
@@ -74,7 +99,8 @@ update msg { sentMessages, receivedMessages } =
     Send msg ->
       (Model (msg :: sentMessages) receivedMessages, WebSocket.send websocketLocation (encodeOSCMessage msg))
     NewMessage str ->
-      (Model sentMessages ((D.decodeString decodeOSCMessage str) :: receivedMessages), Cmd.none)
+      Debug.log (toString ((D.decodeString decodeOSCBundle str) :: receivedMessages))
+      (Model sentMessages ((D.decodeString decodeOSCBundle str) :: receivedMessages), Cmd.none)
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
