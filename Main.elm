@@ -3,9 +3,11 @@ import Html.App as Html
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Json.Decode as D
+import List
+import String
 import WebSocket
 
-import Osc exposing (..)
+import Osc
 import Slider
 
 websocketLocation = "ws://64.255.16.184:3000"
@@ -21,48 +23,84 @@ main =
 -- APP --
 
 type alias Model =
-  { sentMessages : List OscMessage
-  , receivedMessages : List (Result String OscBundle)
-  , slider : Slider.Model
+  { sentMessages : List Osc.Message
+  , sliders : List Slider.Model
   }
 
 init : (Model, Cmd Msg)
 init =
-  (Model [] [] (Slider.Model "Rad" ["rad"] 0 1 0.5), Cmd.none)
+  (Model [] [], Cmd.none)
 
 type Msg
-  = Send OscMessage
-  | NewMessage String
-  | SliderMsg Slider.Msg
+  = Send Osc.Message
+  | NewMessage Osc.Bundle
+  | SliderMsg String Slider.Msg
+  | AddSlider Slider.Model
+  | NoOp
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
     Send msg ->
-      ({model | sentMessages = msg :: model.sentMessages}, sendMessage msg)
+      ({model | sentMessages = msg :: model.sentMessages}, Osc.sendPacket (Osc.PacketMessage msg))
 
-    NewMessage str ->
-      Debug.log (toString ((D.decodeString decodeOscBundle str) :: model.receivedMessages))
-      ({ model | receivedMessages = ((D.decodeString decodeOscBundle str) :: model.receivedMessages) }, Cmd.none)
-
-    SliderMsg sliderMsg ->
+    NewMessage msgs ->
       let
-        (sliderModel, sliderCmds) =
-          Slider.update sliderMsg model.slider
+        parsed = List.concat <| List.map (\m -> List.map (\p -> Osc.parse NoOp p m) (parsers model)) msgs
+        update' msg (m, c) =
+          let
+            (m', c') =
+              update msg m
+          in
+            (m', Cmd.batch [c, c'])
+        (model', cmds) = List.foldl update' (model, Cmd.none) (Debug.log "parsed: " parsed)
       in
-        ({ model | slider = sliderModel }, Cmd.map SliderMsg sliderCmds)
+        (model', cmds)
 
+    SliderMsg name sliderMsg ->
+      let
+        (sliderModels, sliderCmds) =
+          List.unzip (List.map (updateHelp name sliderMsg) model.sliders)
+      in
+        ({ model | sliders = sliderModels }, Cmd.batch sliderCmds)
+
+    AddSlider slider ->
+      ({ model | sliders = model.sliders ++ [slider]}, Cmd.none)
+
+    NoOp ->
+      (model, Cmd.none)
+
+parsers : Model -> List (Osc.Message -> Maybe Msg)
+parsers model =
+  (::) parseMessage <| (flip List.map) model.sliders <| \s -> Maybe.map (SliderMsg s.name) << Slider.parseMessage s
+
+updateHelp : String -> Slider.Msg -> Slider.Model -> (Slider.Model, Cmd Msg)
+updateHelp name msg slider =
+  if slider.name /= name then
+     ( slider, Cmd.none )
+  else
+    let
+      (newSlider, cmds) =
+        Slider.update msg slider
+    in
+      ( newSlider, Cmd.map (SliderMsg name) cmds )
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-  WebSocket.listen websocketLocation NewMessage
+  Sub.map (Maybe.withDefault NoOp << Maybe.map NewMessage << Result.toMaybe) <| WebSocket.listen websocketLocation (D.decodeString Osc.decodeBundle)
 
-sendDefaultMessage =
-  Send (OscMessage "/test" [ OscString "one", OscFloat 1 ])
+parseMessage : Osc.Message -> Maybe Msg
+parseMessage =
+  Maybe.map AddSlider << Slider.init
+
+defaultOscMessage : Msg
+defaultOscMessage =
+  Send (Osc.Message ["test"] [ Osc.StringArg "one", Osc.FloatArg 1 ])
 
 view : Model -> Html Msg
 view model =
   div []
-    [ button [onClick sendDefaultMessage] [text "Send"]
-    , Html.map SliderMsg (Slider.view model.slider)
+    [ button [onClick defaultOscMessage] [text "Send"]
+    , div []
+        (List.map (\s -> Html.map (SliderMsg s.name) (Slider.view s))model.sliders)
     ]

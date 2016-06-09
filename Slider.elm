@@ -1,11 +1,13 @@
-module Slider exposing (Model, Msg, init, update, view)
+module Slider exposing (Model, Msg, init, update, view, parseMessage)
 import Html exposing (..)
 import Html.Attributes as A
 import Html.Events exposing (..)
 import Json.Decode as D
+import List exposing (..)
+import Maybe exposing (..)
 import String as S
 
-import Osc exposing (..)
+import Osc
 
 type alias Model =
  { name : String
@@ -18,23 +20,49 @@ type alias Model =
 type Msg
   = ChangeValue Float
 
-init : (Model, Cmd Msg)
-init =
-  (Model "" [] 0 0 0, Cmd.none)
+parseMessage : Model -> Osc.Message -> Maybe Msg
+parseMessage model msg =
+  case (List.reverse msg.address, msg.args) of
+    (v::name::_, (Osc.FloatArg value)::_ )->
+      if v == "value" && name == model.name then
+        Just <| ChangeValue value
+      else
+        (\_ -> Nothing) (Debug.log "name: " name)
+
+    _ -> (\_ -> Nothing) (Debug.log "msg: " msg)
+
+init : Osc.Message -> Maybe Model
+init msg =
+  case msg.args of
+    (Osc.FloatArg cf)
+      ::(Osc.StringArg tf)
+      ::(Osc.StringArg name)
+      ::(Osc.FloatArg value)
+      ::(Osc.FloatArg min)
+      ::(Osc.FloatArg max)::_ ->
+      if cf == 32 && tf == "f" then
+        Just <| Model name msg.address min max value
+      else
+        Nothing
+    _ -> Nothing
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
     ChangeValue newValue ->
       let
-        oscMessage = OscMessage (encodeAddress model.address) [OscFloat newValue]
+        oscMessage = Osc.Message model.address [Osc.FloatArg newValue]
       in
-        ({ model | value = newValue }, sendMessage oscMessage)
+        ({ model | value = newValue }, Osc.sendPacket (Osc.PacketMessage {oscMessage | address = oscMessage.address ++ ["value"]}))
 
 view : Model -> Html Msg
 view model =
   div []
-    [ label [] [ text model.name ]
+    [ div []
+        [ label [] [ text model.name ]
+        , text ": "
+        , text (toString model.value)
+        ]
     , input
         [ A.type' "range"
         , A.min (toString model.min)
@@ -44,7 +72,6 @@ view model =
         , onInput (\e -> (ChangeValue (Result.withDefault model.value (S.toFloat e))))
         ]
         []
-    , div [] [ text (toString model.value)]
     ]
 
 -- HELPER FUNCTIONS --

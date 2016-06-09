@@ -1,4 +1,4 @@
-module Osc exposing (OscMessage, OscBundle, OscArg(..), decodeOscBundle, sendMessage)
+module Osc exposing (Message, Bundle, Arg(..), Packet(..), decodeBundle, encodeBundle, parse, sendPacket)
 import Json.Decode as D
 import String exposing (..)
 import WebSocket
@@ -6,64 +6,75 @@ import WebSocket
 -- TODO: calculate this --
 websocketLocation = "ws://64.255.16.184:3000"
 
-type OscArg
-  = OscFloat Float
-  | OscString String
+type Arg
+  = FloatArg Float
+  | StringArg String
 
-decodeOscArg : D.Decoder OscArg
-decodeOscArg =
+
+type Packet
+  = PacketMessage Message
+  | PacketBundle Bundle
+
+parse : msg -> (Message -> Maybe msg) -> Message -> msg
+parse noOp parser msg =
+  Maybe.withDefault noOp <| parser msg
+
+decodeArg : D.Decoder Arg
+decodeArg =
   D.oneOf
-    [ D.map OscFloat D.float
-    , D.map OscString D.string
+    [ D.map FloatArg D.float
+    , D.map StringArg D.string
     ]
 
-encodeOscArg : OscArg -> String
-encodeOscArg arg =
+encodeArg : Arg -> String
+encodeArg arg =
   case arg of
-    OscFloat f ->
+    FloatArg f ->
       toString f
-    OscString s ->
+    StringArg s ->
       "\"" ++ s ++ "\""
 
+type alias Message =
+  { address : List String
+  , args : List Arg }
 
-type alias OscMessage =
-  { address : String
-  , args : List OscArg }
-
-decodeOscMessage : D.Decoder OscMessage
-decodeOscMessage =
+decodeMessage : D.Decoder Message
+decodeMessage =
   D.customDecoder (D.list D.value) (\jsonList ->
     case jsonList of
       address :: args ->
-        Result.map2 OscMessage
-          (D.decodeValue D.string address)
-          ((List.foldr (Result.map2 (::)) (Ok [])) (List.map (D.decodeValue decodeOscArg) args))
+        Result.map2 Message
+          (Result.map (split "/") (D.decodeValue D.string address))
+          ((List.foldr (Result.map2 (::)) (Ok [])) (List.map (D.decodeValue decodeArg) args))
 
       _ -> Result.Err "Expecting at least an address")
 
-encodeOscMessage : OscMessage -> String
-encodeOscMessage { address, args } =
-  "[\"" ++ address ++ "\"," ++ (join "," (List.map encodeOscArg args)) ++ "]"
+encodeMessage : Message -> String
+encodeMessage { address, args } =
+  "[\"" ++ (join "/" address) ++ "\"," ++ (join "," (List.map encodeArg args)) ++ "]"
 
 
-type alias OscBundle = List OscMessage
+type alias Bundle = List Message
 
-decodeOscBundle : D.Decoder OscBundle
-decodeOscBundle =
+decodeBundle : D.Decoder Bundle
+decodeBundle =
   D.customDecoder (D.list D.value) (\jsonList ->
     case jsonList of
       bundleText :: timing :: msgs ->
-        (List.foldr (Result.map2 (::)) (Ok []) (List.map (D.decodeValue decodeOscMessage) msgs))
+        (List.foldr (Result.map2 (::)) (Ok []) (List.map (D.decodeValue decodeMessage) msgs))
 
       _ ->
         Result.Err "expecing a bundle")
 
 
-encodeOscBundle : OscBundle -> String
-encodeOscBundle bundle =
-  "[\"#bundle\"," ++ (join "," (List.map encodeOscMessage bundle)) ++ "]"
+encodeBundle : Bundle -> String
+encodeBundle bundle =
+  "[\"#bundle\"," ++ (join "," (List.map encodeMessage bundle)) ++ "]"
 
-sendMessage : OscMessage -> Cmd msg
-sendMessage msg =
-  Debug.log (encodeOscMessage msg)
-  WebSocket.send websocketLocation (encodeOscMessage msg)
+sendPacket : Packet -> Cmd msg
+sendPacket p =
+  case p of
+    PacketMessage m ->
+      sendPacket (PacketBundle [m])
+    PacketBundle b ->
+      WebSocket.send websocketLocation (encodeBundle b)
