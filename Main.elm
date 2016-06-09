@@ -10,7 +10,7 @@ import WebSocket
 import Osc
 import Slider
 
-websocketLocation = "ws://64.255.16.184:3000"
+websocketLocation = "ws://localhost:3000"
 
 main =
   Html.program
@@ -53,7 +53,7 @@ update msg model =
               update msg m
           in
             (m', Cmd.batch [c, c'])
-        (model', cmds) = List.foldl update' (model, Cmd.none) (Debug.log "parsed: " parsed)
+        (model', cmds) = List.foldl update' (model, Cmd.none) parsed
       in
         (model', cmds)
 
@@ -87,7 +87,7 @@ updateHelp name msg slider =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-  Sub.map (Maybe.withDefault NoOp << Maybe.map NewMessage << Result.toMaybe) <| WebSocket.listen websocketLocation (D.decodeString Osc.decodeBundle)
+  Sub.map (Debug.log "Message received" << Maybe.withDefault NoOp << Maybe.map NewMessage << Result.toMaybe) <| WebSocket.listen websocketLocation (D.decodeString Osc.decodeBundle)
 
 parseMessage : Osc.Message -> Maybe Msg
 parseMessage =

@@ -15,10 +15,12 @@ type alias Model =
  , min : Float
  , max : Float
  , value : Float
+ , changing : Bool
  }
 
 type Msg
-  = ChangeValue Float
+  = OnInput Float
+  | ChangeValue Float
 
 parseMessage : Model -> Osc.Message -> Maybe Msg
 parseMessage model msg =
@@ -27,9 +29,9 @@ parseMessage model msg =
       if v == "value" && name == model.name then
         Just <| ChangeValue value
       else
-        (\_ -> Nothing) (Debug.log "name: " name)
+        (\_ -> Nothing) name
 
-    _ -> (\_ -> Nothing) (Debug.log "msg: " msg)
+    _ -> (\_ -> Nothing) msg
 
 init : Osc.Message -> Maybe Model
 init msg =
@@ -41,7 +43,7 @@ init msg =
       ::(Osc.FloatArg min)
       ::(Osc.FloatArg max)::_ ->
       if cf == 32 && tf == "f" then
-        Just <| Model name msg.address min max value
+        Just <| Model name msg.address min max value False
       else
         Nothing
     _ -> Nothing
@@ -49,11 +51,19 @@ init msg =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
-    ChangeValue newValue ->
+    OnInput newValue ->
       let
         oscMessage = Osc.Message model.address [Osc.FloatArg newValue]
+        cmds =
+          if model.value /= newValue then
+            Osc.sendPacket (Osc.PacketMessage {oscMessage | address = oscMessage.address ++ ["value"]})
+          else
+            Cmd.none
       in
-        ({ model | value = newValue }, Osc.sendPacket (Osc.PacketMessage {oscMessage | address = oscMessage.address ++ ["value"]}))
+        ({ model | value = newValue }, cmds)
+
+    ChangeValue newValue ->
+      ({ model | value = newValue }, Cmd.none)
 
 view : Model -> Html Msg
 view model =
@@ -69,7 +79,7 @@ view model =
         , A.max (toString model.max)
         , A.value (toString model.value)
         , A.step (toString ((model.max - model.min) / 100.0))
-        , onInput (\e -> (ChangeValue (Result.withDefault model.value (S.toFloat e))))
+        , onInput (\e -> (OnInput (Result.withDefault model.value (S.toFloat e))))
         ]
         []
     ]

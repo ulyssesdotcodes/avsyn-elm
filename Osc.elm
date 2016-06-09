@@ -4,7 +4,7 @@ import String exposing (..)
 import WebSocket
 
 -- TODO: calculate this --
-websocketLocation = "ws://64.255.16.184:3000"
+websocketLocation = "ws://localhost:3000"
 
 type Arg
   = FloatArg Float
@@ -69,7 +69,7 @@ decodeBundle =
 
 encodeBundle : Bundle -> String
 encodeBundle bundle =
-  "[\"#bundle\"," ++ (join "," (List.map encodeMessage bundle)) ++ "]"
+  "[\"#bundle\",{\"timestamp\":0}," ++ (join "," (List.map encodeMessage bundle)) ++ "]"
 
 sendPacket : Packet -> Cmd msg
 sendPacket p =
