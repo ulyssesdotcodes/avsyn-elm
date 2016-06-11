@@ -7,6 +7,7 @@ import List
 import String
 import WebSocket
 
+import ChoiceVis
 import Osc
 import Slider
 
@@ -24,18 +25,17 @@ main =
 
 type alias Model =
   { sentMessages : List Osc.Message
-  , sliders : List Slider.Model
+  , choiceA : ChoiceVis.Model
   }
 
 init : (Model, Cmd Msg)
 init =
-  (Model [] [], Cmd.none)
+  (Model [] (ChoiceVis.init ["cinder"] "visA" "A" ["B"]), Cmd.none)
 
 type Msg
   = Send Osc.Message
   | NewMessage Osc.Bundle
-  | SliderMsg String Slider.Msg
-  | AddSlider Slider.Model
+  | ChoiceMsg ChoiceVis.Msg
   | NoOp
 
 update : Msg -> Model -> (Model, Cmd Msg)
@@ -46,7 +46,8 @@ update msg model =
 
     NewMessage msgs ->
       let
-        parsed = List.concat <| List.map (\m -> List.map (\p -> Osc.parse NoOp p m) (parsers model)) msgs
+        msgs' = (snd << List.unzip) <| List.filterMap Osc.extractTopAddress  msgs
+        parsed = List.concat <| List.map (\m -> List.map (\p -> Osc.parse NoOp p (Debug.log "Message" m)) (parsers model)) msgs'
         update' msg (m, c) =
           let
             (m', c') =
@@ -57,41 +58,23 @@ update msg model =
       in
         (model', cmds)
 
-    SliderMsg name sliderMsg ->
+    ChoiceMsg msg ->
       let
-        (sliderModels, sliderCmds) =
-          List.unzip (List.map (updateHelp name sliderMsg) model.sliders)
+        (choiceA', cmds) =
+          ChoiceVis.update msg model.choiceA
       in
-        ({ model | sliders = sliderModels }, Cmd.batch sliderCmds)
-
-    AddSlider slider ->
-      ({ model | sliders = model.sliders ++ [slider]}, Cmd.none)
+        ({ model | choiceA = choiceA' }, Cmd.map ChoiceMsg cmds )
 
     NoOp ->
       (model, Cmd.none)
 
 parsers : Model -> List (Osc.Message -> Maybe Msg)
 parsers model =
-  (::) parseMessage <| (flip List.map) model.sliders <| \s -> Maybe.map (SliderMsg s.name) << Slider.parseMessage s
-
-updateHelp : String -> Slider.Msg -> Slider.Model -> (Slider.Model, Cmd Msg)
-updateHelp name msg slider =
-  if slider.name /= name then
-     ( slider, Cmd.none )
-  else
-    let
-      (newSlider, cmds) =
-        Slider.update msg slider
-    in
-      ( newSlider, Cmd.map (SliderMsg name) cmds )
+  [ Maybe.map ChoiceMsg << ChoiceVis.parseMessage model.choiceA ]
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
   Sub.map (Debug.log "Message received" << Maybe.withDefault NoOp << Maybe.map NewMessage << Result.toMaybe) <| WebSocket.listen websocketLocation (D.decodeString Osc.decodeBundle)
-
-parseMessage : Osc.Message -> Maybe Msg
-parseMessage =
-  Maybe.map AddSlider << Slider.init
 
 defaultOscMessage : Msg
 defaultOscMessage =
@@ -102,5 +85,6 @@ view model =
   div []
     [ button [onClick defaultOscMessage] [text "Send"]
     , div []
-        (List.map (\s -> Html.map (SliderMsg s.name) (Slider.view s))model.sliders)
+       [ Html.map ChoiceMsg <| ChoiceVis.view model.choiceA
+       ]
     ]

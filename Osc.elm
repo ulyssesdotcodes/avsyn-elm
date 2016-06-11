@@ -1,4 +1,4 @@
-module Osc exposing (Message, Bundle, Arg(..), Packet(..), decodeBundle, encodeBundle, parse, sendPacket)
+module Osc exposing (Message, Bundle, Arg(..), Packet(..), decodeBundle, encodeBundle, parse, sendPacket, extractTopAddress)
 import Json.Decode as D
 import String exposing (..)
 import WebSocket
@@ -44,14 +44,14 @@ decodeMessage =
     case jsonList of
       address :: args ->
         Result.map2 Message
-          (Result.map (split "/") (D.decodeValue D.string address))
+          (Result.andThen (D.decodeValue D.string address) (Result.fromMaybe "error parsing address" << List.tail << split "/") )
           ((List.foldr (Result.map2 (::)) (Ok [])) (List.map (D.decodeValue decodeArg) args))
 
       _ -> Result.Err "Expecting at least an address")
 
 encodeMessage : Message -> String
 encodeMessage { address, args } =
-  "[\"" ++ (join "/" address) ++ "\"," ++ (join "," (List.map encodeArg args)) ++ "]"
+  "[\"/" ++ (join "/" address) ++ "\"," ++ (join "," (List.map encodeArg args)) ++ "]"
 
 
 type alias Bundle = List Message
@@ -70,6 +70,14 @@ decodeBundle =
 encodeBundle : Bundle -> String
 encodeBundle bundle =
   "[\"#bundle\",{\"timestamp\":0}," ++ (join "," (List.map encodeMessage bundle)) ++ "]"
+
+extractTopAddress : Message -> Maybe (String, Message)
+extractTopAddress { address, args } =
+  case address of
+      head::rest ->
+        Just ( head, Message rest args )
+      _ ->
+        Nothing
 
 sendPacket : Packet -> Cmd msg
 sendPacket p =
