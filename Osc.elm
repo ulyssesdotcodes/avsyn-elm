@@ -1,4 +1,19 @@
-module Osc exposing (Message, Bundle, Arg(..), Packet(..), decodeBundle, encodeBundle, parse, sendPacket, extractTopAddress)
+module Osc exposing
+  ( Message
+  , MessageArgs (..)
+  , FloatControlArgs
+  , Bundle
+  , Arg(..)
+  , Packet(..)
+  , decodeBundle
+  , encodeBundle
+  , extractTopAddress
+  , decodeString
+  , decodeFloat
+  , parse
+  , sendPacket
+  )
+
 import Json.Decode as D
 import String exposing (..)
 import WebSocket
@@ -9,6 +24,20 @@ websocketLocation = "ws://localhost:3000"
 type Arg
   = FloatArg Float
   | StringArg String
+
+decodeString : Arg -> Maybe String
+decodeString a =
+  case a of
+    StringArg s ->
+      Just s
+    _ -> Nothing
+
+decodeFloat : Arg -> Maybe Float
+decodeFloat a =
+  case a of
+    FloatArg f ->
+      Just f
+    _ -> Nothing
 
 
 type Packet
@@ -36,23 +65,67 @@ encodeArg arg =
 
 type alias Message =
   { address : List String
-  , args : List Arg }
+  , args : MessageArgs
+  }
+
+type MessageArgs
+  = FloatRange FloatControlArgs
+  | Value Arg
+  | Raw (List Arg)
+
+type alias FloatControlArgs =
+  { name : String
+  , min : Float
+  , max : Float
+  , default : Float
+  }
+
+-- Control Messages --
 
 decodeMessage : D.Decoder Message
 decodeMessage =
-  D.customDecoder (D.list D.value) (\jsonList ->
-    case jsonList of
-      address :: args ->
-        Result.map2 Message
-          (Result.andThen (D.decodeValue D.string address) (Result.fromMaybe "error parsing address" << List.tail << split "/") )
-          ((List.foldr (Result.map2 (::)) (Ok [])) (List.map (D.decodeValue decodeArg) args))
+  let
+    parsedArgs args = ((List.foldr (Result.map2 (::)) (Ok [])) (List.map (D.decodeValue decodeArg) args))
+  in
+    D.customDecoder (D.list D.value)
+      (\jsonList ->
+        case jsonList of
+          address :: args ->
+            Result.map2 Message
+              (Result.andThen (D.decodeValue D.string address) (Result.fromMaybe "error parsing address" << List.tail << split "/") )
+              (Result.map Raw <| parsedArgs args)
 
-      _ -> Result.Err "Expecting at least an address")
+          _ -> Result.Err "Expecting at least an address"
+      )
+
+decodeControlMessage : Message -> Maybe Message
+decodeControlMessage { address, args } =
+  (List.head << List.reverse) address `Maybe.andThen` (\name ->
+      case args of
+        Raw rawArgs ->
+          case rawArgs of
+            (FloatArg value)
+              ::(FloatArg min)
+              ::(FloatArg max)::_ ->
+              Just <| Message address <| FloatRange <| FloatControlArgs name min max value
+            _ ->
+              Nothing
+        _ ->
+          Nothing)
 
 encodeMessage : Message -> String
-encodeMessage { address, args } =
-  "[\"/" ++ (join "/" address) ++ "\"," ++ (join "," (List.map encodeArg args)) ++ "]"
-
+encodeMessage { address,  args } =
+  let
+    parsedArgs =
+      case args of
+        Value v ->
+          [ v ]
+        Raw rawArgs ->
+          rawArgs
+        _ ->
+          []
+  in
+    "[\"/" ++ (join "/" address) ++ "\"," ++ (join "," <| List.map encodeArg parsedArgs) ++ "]"
 
 type alias Bundle = List Message
 
@@ -67,7 +140,7 @@ decodeBundle =
         Result.Err "expecing a bundle")
 
 
-encodeBundle : Bundle -> String
+encodeBundle : List Message -> String
 encodeBundle bundle =
   "[\"#bundle\",{\"timestamp\":0}," ++ (join "," (List.map encodeMessage bundle)) ++ "]"
 

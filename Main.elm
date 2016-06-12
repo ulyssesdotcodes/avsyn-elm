@@ -78,7 +78,7 @@ subscriptions model =
 
 defaultOscMessage : Msg
 defaultOscMessage =
-  Send (Osc.Message ["test"] [ Osc.StringArg "one", Osc.FloatArg 1 ])
+  Send (Osc.Message ["test"] <| Osc.Raw [ Osc.StringArg "one", Osc.FloatArg 1 ])
 
 view : Model -> Html Msg
 view model =

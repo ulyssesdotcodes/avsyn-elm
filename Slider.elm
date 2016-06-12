@@ -15,45 +15,38 @@ type alias Model =
  , min : Float
  , max : Float
  , value : Float
- , changing : Bool
  }
 
 type Msg
   = OnInput Float
   | ChangeValue Float
 
-parseMessage : Model -> Osc.Message -> Maybe Msg
-parseMessage model msg =
-  case (List.reverse msg.address, msg.args) of
-    (v::name::_, (Osc.FloatArg value)::_ )->
-      if v == "value" && name == model.name then
-        Just <| ChangeValue value
-      else
-        (\_ -> Nothing) name
-
-    _ -> (\_ -> Nothing) msg
-
 init : Osc.Message -> Maybe Model
 init msg =
   case msg.args of
-    (Osc.FloatArg cf)
-      ::(Osc.StringArg tf)
-      ::(Osc.StringArg name)
-      ::(Osc.FloatArg value)
-      ::(Osc.FloatArg min)
-      ::(Osc.FloatArg max)::_ ->
-      if cf == 32 && tf == "f" then
-        Just <| Model name msg.address min max value False
+    Osc.FloatRange { name, min, max, default } ->
+        Just <| Model name msg.address min max default
+    _ ->
+      Nothing
+
+parseMessage : Model -> Osc.Message -> Maybe Msg
+parseMessage model msg =
+  case msg.args of
+    Osc.Value (Osc.FloatArg value) ->
+      if msg.address == model.address then
+        Just <| ChangeValue value
       else
         Nothing
-    _ -> Nothing
+
+    _ ->
+      Nothing
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
     OnInput newValue ->
       let
-        oscMessage = Osc.Message model.address [Osc.FloatArg newValue]
+        oscMessage = Osc.Message model.address <| Osc.Raw [Osc.FloatArg newValue]
         cmds =
           if model.value /= newValue then
             Osc.sendPacket (Osc.PacketMessage {oscMessage | address = oscMessage.address ++ ["value"]})
