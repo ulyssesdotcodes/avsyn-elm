@@ -8,10 +8,11 @@ import Maybe exposing (..)
 import String as S
 
 import Osc
+import Paths exposing (..)
+import Types exposing (..)
 
 type alias Model =
  { name : String
- , address : List String
  , min : Float
  , max : Float
  , value : Float
@@ -21,42 +22,39 @@ type Msg
   = OnInput Float
   | ChangeValue Float
 
-init : Osc.Message -> Maybe Model
+type SliderArgs = SliderArgs String Float Float Float
+type ValueArgs = ValueArgs Float
+
+init : ParsedMessage String -> Maybe Model
 init msg =
-  case msg.args of
-    Osc.FloatRange { name, min, max, default } ->
-        Just <| Model name msg.address min max default
-    _ ->
-      Nothing
+  let
+    args = Osc.parse SliderArgs (Osc.f 32 `Osc.and` Osc.s "f" `Osc.and` Osc.string `Osc.and` Osc.float `Osc.and` Osc.float `Osc.and` Osc.float) msg.args
+  in
+    Result.toMaybe <| Result.map (\(SliderArgs name default min max) -> Model name min max default) args
 
-parseMessage : Model -> Osc.Message -> Maybe Msg
+parseMessage : Model -> ParsedMessage String -> Maybe Msg
 parseMessage model msg =
-  case msg.args of
-    Osc.Value (Osc.FloatArg value) ->
-      if msg.address == model.address then
-        Just <| ChangeValue value
-      else
-        Nothing
-
+  case (msg.address == model.name, Osc.parse ValueArgs (Osc.float) msg.args) of
+    (True, Ok (ValueArgs val)) ->
+      Just <| ChangeValue val
     _ ->
       Nothing
 
-update : Msg -> Model -> (Model, Cmd Msg)
+update : Msg -> Model -> (Model, Cmd Msg, List (ParsedMessage ControlPath))
 update msg model =
   case msg of
     OnInput newValue ->
       let
-        oscMessage = Osc.Message model.address <| Osc.Raw [Osc.FloatArg newValue]
-        cmds =
+        msgs =
           if model.value /= newValue then
-            Osc.sendPacket (Osc.PacketMessage {oscMessage | address = oscMessage.address ++ ["value"]})
+            [ParsedMessage (Paths.Value model.name) [Osc.FloatArg newValue]]
           else
-            Cmd.none
+            []
       in
-        ({ model | value = newValue }, cmds)
+        ({ model | value = newValue }, Cmd.none, msgs)
 
     ChangeValue newValue ->
-      ({ model | value = newValue }, Cmd.none)
+      ({ model | value = newValue }, Cmd.none, [])
 
 view : Model -> Html Msg
 view model =
@@ -70,7 +68,7 @@ view model =
         [ A.type' "range"
         , A.min (toString model.min)
         , A.max (toString model.max)
-        , A.value (toString model.value)
+        , A.defaultValue (toString model.value)
         , A.step (toString ((model.max - model.min) / 100.0))
         , onInput (\e -> (OnInput (Result.withDefault model.value (S.toFloat e))))
         ]
